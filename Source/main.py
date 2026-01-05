@@ -1,6 +1,14 @@
 """
-Main Pipeline
-Orchestrates the entire data processing and ML pipeline
+Main Pipeline - Lab 02 Data Modeling
+Process publications, create labels, and train ML model
+
+Usage:
+    python main.py                # Interactive menu
+    python main.py --process      # Process all publications
+    python main.py --auto-label   # Run auto-labeling
+    python main.py --train        # Train ML model
+    python main.py --full         # Run complete pipeline
+    python main.py --status       # Show pipeline status
 """
 import re
 import json
@@ -27,7 +35,7 @@ class Pipeline:
         
         Args:
             sample_dir: Path to sample directory
-            output_dir: Path to output directory (MSSV folder)
+            output_dir: Path to output directory
         """
         self.sample_dir = Path(sample_dir)
         self.output_dir = Path(output_dir)
@@ -53,8 +61,6 @@ class Pipeline:
         Returns:
             True if successful
         """
-        print(f"\nProcessing {pub_id}...")
-        
         pub_dir = self.sample_dir / pub_id
         output_pub_dir = self.output_dir / pub_id
         output_pub_dir.mkdir(exist_ok=True)
@@ -66,12 +72,10 @@ class Pipeline:
                 dst = output_pub_dir / filename
                 if src.exists():
                     shutil.copy2(src, dst)
-                    print(f"  ✓ Copied {filename}")
             
             # 2. Process all versions
             tex_dir = pub_dir / 'tex'
             if not tex_dir.exists():
-                print(f"  ✗ No tex directory found")
                 return False
             
             versions_data = {}
@@ -79,15 +83,12 @@ class Pipeline:
                 if not version_dir.is_dir():
                     continue
                 
-                version_name = version_dir.name  # e.g., '2310-15395v1'
-                # Extract version number
+                version_name = version_dir.name
                 version_match = re.search(r'v(\d+)', version_name)
                 if version_match:
                     version = version_match.group(1)
                 else:
                     continue
-                
-                print(f"  Processing {version_name}...")
                 
                 # Parse LaTeX
                 parsed_data = parse_version_directory(version_dir)
@@ -96,138 +97,284 @@ class Pipeline:
                     # Clean content
                     cleaned_body = clean_latex_content(parsed_data['body'])
                     parsed_data['body'] = cleaned_body
-                    
                     versions_data[version] = parsed_data
-                    print(f"    ✓ Parsed {version_name}")
             
             # 3. Build hierarchy
             if versions_data:
                 hierarchy_data = build_hierarchy_from_versions(pub_id, versions_data)
-                
-                # Write hierarchy.json
                 hierarchy_path = output_pub_dir / 'hierarchy.json'
-                if write_json_safe(hierarchy_data, hierarchy_path):
-                    print(f"  ✓ Created hierarchy.json")
+                write_json_safe(hierarchy_data, hierarchy_path)
             
             # 4. Process BibTeX references
             bib_data = process_publication_references(pub_dir)
             
             if bib_data['entries']:
-                # Write refs.bib
                 refs_bib_path = output_pub_dir / 'refs.bib'
                 write_refs_bib(bib_data['entries'], refs_bib_path)
-                print(f"  ✓ Created refs.bib with {len(bib_data['entries'])} entries")
             
             return True
             
         except Exception as e:
-            print(f"  ✗ Error processing {pub_id}: {e}")
-            import traceback
-            traceback.print_exc()
             return False
+    
+    def run(self, pub_id: str = None):
+        """Run the data processing pipeline"""
+        if pub_id:
+            print(f"\nProcessing: {pub_id}")
+            success = self.process_publication(pub_id)
+            print(f"{'[OK]' if success else '[FAILED]'}")
+        else:
+            self.process_all_publications()
     
     def process_all_publications(self):
         """Process all publications in sample directory"""
         pub_ids = self.get_publication_ids()
         
-        print(f"Found {len(pub_ids)} publications to process")
+        if not pub_ids:
+            print("[ERROR] No publications found!")
+            return
+        
+        print(f"\nProcessing {len(pub_ids)} publications...")
         
         successful = 0
         failed = 0
         
-        for pub_id in tqdm(pub_ids, desc="Processing publications"):
+        for pub_id in tqdm(pub_ids, desc="Processing"):
             if self.process_publication(pub_id):
                 successful += 1
             else:
                 failed += 1
         
-        print(f"\n{'='*60}")
-        print(f"Processing complete!")
-        print(f"  Successful: {successful}")
-        print(f"  Failed: {failed}")
-        print(f"{'='*60}")
+        print(f"Complete: {successful} successful, {failed} failed\n")
     
-    def prepare_ml_data(self, manual_labels_path: Path, auto_label_count: int = None):
-        """
-        Prepare data for ML training
+    def run_auto_labeling(self, num_pubs: int = None):
+        """Run automatic labeling on publications"""
+        from auto_labeling import AutoLabeler
         
-        Args:
-            manual_labels_path: Path to manual labels JSON file
-            auto_label_count: Number of publications to auto-label
-        """
-        print("\nPreparing ML training data...")
+        print("\nAuto-labeling publications...")
         
-        # Load manual labels
-        manual_labels = load_json_safe(manual_labels_path)
+        # Get publications with data
+        pub_dirs = []
+        for pub_dir in self.output_dir.iterdir():
+            if pub_dir.is_dir():
+                if (pub_dir / 'refs.bib').exists() and (pub_dir / 'references.json').exists():
+                    pub_dirs.append(pub_dir)
         
-        if not manual_labels:
-            print("No manual labels found. Please create manual labels first.")
+        if not pub_dirs:
+            print("[ERROR] No publications with refs.bib and references.json found")
             return
         
-        # TODO: Implement auto-labeling using heuristics
-        # TODO: Split data into train/valid/test
-        # TODO: Train model
-        # TODO: Generate predictions
+        # Determine number to label
+        if num_pubs is None:
+            num_pubs = max(3, int(len(pub_dirs) * 0.1))
         
-        print("ML data preparation complete!")
+        num_pubs = min(num_pubs, len(pub_dirs))
+        
+        # Create labels directory
+        labels_dir = self.output_dir.parent / 'labels' / 'auto'
+        labels_dir.mkdir(exist_ok=True, parents=True)
+        
+        # Run auto-labeling
+        labeler = AutoLabeler(threshold_title=0.9, threshold_author=0.5)
+        labeled_pubs = labeler.auto_label_publications(pub_dirs[:num_pubs], labels_dir)
+        
+        print(f"Complete: Labeled {len(labeled_pubs)}/{num_pubs} publications\n")
     
-    def train_and_evaluate_ml_model(self):
-        """Train ML model and evaluate on test set"""
-        print("\nTraining ML model...")
+    def run_ml_pipeline(self):
+        """Run ML training and evaluation pipeline"""
+        from ml_pipeline import MLPipeline
         
-        # Load all processed publications
-        pub_ids = [p.name for p in self.output_dir.iterdir() if p.is_dir()]
+        print("\nML Training & Evaluation...")
         
-        all_bib_entries = []
-        all_references = {}
+        labels_dir = self.output_dir.parent / 'labels'
         
-        for pub_id in pub_ids:
-            pub_dir = self.output_dir / pub_id
+        # Check labels
+        if not labels_dir.exists():
+            print("[ERROR] No labels found!")
+            return
+        
+        manual_labels = list((labels_dir / 'manual').glob('*_labels.json')) if (labels_dir / 'manual').exists() else []
+        auto_labels = list((labels_dir / 'auto').glob('*_auto_labels.json')) if (labels_dir / 'auto').exists() else []
+        
+        print(f"Labels: {len(manual_labels)} manual, {len(auto_labels)} auto")
+        
+        if len(manual_labels) < 3 or len(auto_labels) < 2:
+            print(f"[WARNING] Insufficient labels (recommended: >=3 manual, >=2 auto)")
+        
+        # Run pipeline
+        pipeline = MLPipeline(self.output_dir, labels_dir)
+        pipeline.run_full_pipeline()
+    
+    def run_full_pipeline(self):
+        """Run complete pipeline from start to finish"""
+        print("\nFull Pipeline: Process > Label > Train\n")
+        
+        # Step 1: Process
+        print("Step 1/3: Processing publications...")
+        self.process_all_publications()
+        
+        # Step 2: Auto-label
+        print("Step 2/3: Auto-labeling...")
+        self.run_auto_labeling()
+        
+        # Step 3: Train with available labels
+        print("Step 3/3: ML training...")
+        labels_dir = self.output_dir.parent / 'labels'
+        manual_labels = list((labels_dir / 'manual').glob('*_labels.json')) if (labels_dir / 'manual').exists() else []
+        auto_labels = list((labels_dir / 'auto').glob('*_auto_labels.json')) if (labels_dir / 'auto').exists() else []
+        
+        if len(manual_labels) + len(auto_labels) == 0:
+            print("[ERROR] No labels found after auto-labeling!")
+        else:
+            self.run_ml_pipeline()
+        
+        print("Full pipeline complete!\n")
+    
+    def show_status(self):
+        """Show current pipeline status"""
+        print(f"\n{'='*70}")
+        print("PIPELINE STATUS")
+        print(f"{'='*70}\n")
+        
+        # Check processed publications
+        processed = []
+        if self.output_dir.exists():
+            for pub_dir in self.output_dir.iterdir():
+                if pub_dir.is_dir() and (pub_dir / 'hierarchy.json').exists():
+                    processed.append(pub_dir.name)
+        
+        print(f"[Data Processing]")
+        print(f"   Processed: {len(processed)} publications")
+        
+        # Check labels
+        labels_dir = self.output_dir.parent / 'labels'
+        manual_count = 0
+        auto_count = 0
+        
+        if labels_dir.exists():
+            if (labels_dir / 'manual').exists():
+                manual_count = len(list((labels_dir / 'manual').glob('*_labels.json')))
+            if (labels_dir / 'auto').exists():
+                auto_count = len(list((labels_dir / 'auto').glob('*_auto_labels.json')))
+        
+        print(f"\n[Labeling]")
+        print(f"   Manual: {manual_count}")
+        print(f"   Auto: {auto_count}")
+        
+        # Check predictions
+        pred_files = list(self.output_dir.glob('*/pred.json')) if self.output_dir.exists() else []
+        
+        print(f"\n[ML Model]")
+        print(f"   Predictions: {len(pred_files)}")
+        
+        if pred_files:
+            # Show MRR
+            by_partition = {'train': [], 'valid': [], 'test': []}
+            for pred_file in pred_files:
+                with open(pred_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                partition = data.get('partition', 'unknown')
+                if partition in by_partition:
+                    mrr = compute_mrr(data['prediction'], data['groundtruth'])
+                    by_partition[partition].append(mrr)
             
-            # Load refs.bib
-            refs_bib = pub_dir / 'refs.bib'
-            if refs_bib.exists():
-                # Parse BibTeX entries
-                from bibtex_processor import BibTeXParser
-                parser = BibTeXParser()
-                entries = parser.parse_bib_file(refs_bib)
-                all_bib_entries.extend([(pub_id, e) for e in entries])
+            print(f"\n   [MRR Scores]")
+            for partition in ['train', 'valid', 'test']:
+                if by_partition[partition]:
+                    avg = sum(by_partition[partition]) / len(by_partition[partition])
+                    print(f"      {partition.capitalize()}: {avg:.4f}")
+        
+        # Next steps
+        print(f"\n{'='*70}")
+        print(f"[Next Steps]")
+        if not processed:
+            print(f"   -> python main.py --process")
+        elif manual_count == 0:
+            print(f"   -> python manual_labeling_helper.py")
+        elif auto_count == 0:
+            print(f"   -> python main.py --auto-label")
+        elif not pred_files:
+            print(f"   -> python main.py --train")
+        else:
+            print(f"   => Pipeline complete!")
+        print(f"{'='*70}\n")
+    
+    def interactive_menu(self):
+        """Interactive menu for pipeline operations"""
+        while True:
+            print("\n" + "="*70)
+            print("LAB 02 - DATA MODELING PIPELINE")
+            print("="*70)
+            print("\n  1. Process publications")
+            print("  2. Auto-labeling")
+            print("  3. Manual labeling")
+            print("  4. Train ML model")
+            print("  5. Run full pipeline")
+            print("  6. Show status")
+            print("  0. Exit")
+            print("="*70)
             
-            # Load references.json
-            refs_json = pub_dir / 'references.json'
-            if refs_json.exists():
-                refs_data = load_json_safe(refs_json)
-                if refs_data:
-                    all_references[pub_id] = refs_data
-        
-        print(f"  Total BibTeX entries: {len(all_bib_entries)}")
-        print(f"  Total publications with references: {len(all_references)}")
-        
-        # TODO: Load ground truth labels
-        # TODO: Create training data
-        # TODO: Train model
-        # TODO: Generate predictions for test set
-        # TODO: Compute MRR
-        
-        print("ML training complete!")
+            try:
+                choice = input("\nChoice [0-6]: ").strip()
+                
+                if choice == '0':
+                    print("\nGoodbye!\n")
+                    break
+                elif choice == '1':
+                    self.run()
+                elif choice == '2':
+                    self.run_auto_labeling()
+                elif choice == '3':
+                    import subprocess
+                    subprocess.run(['python', 'manual_labeling_helper.py'])
+                elif choice == '4':
+                    self.run_ml_pipeline()
+                elif choice == '5':
+                    self.run_full_pipeline()
+                elif choice == '6':
+                    self.show_status()
+                else:
+                    print("[ERROR] Invalid choice")
+            
+            except KeyboardInterrupt:
+                print("\n\nInterrupted. Goodbye!\n")
+                break
+            except Exception as e:
+                print(f"\n[ERROR] {e}\n")
 
 
 def main():
     """Main entry point"""
-    import re
+    import argparse
     
-    print("="*60)
-    print("Lab 02 - Modeling Pipeline")
-    print("="*60)
+    parser = argparse.ArgumentParser(description='Lab 02 - Data Modeling Pipeline')
+    parser.add_argument('--process', action='store_true', help='Process all publications')
+    parser.add_argument('--pub-id', type=str, help='Process specific publication')
+    parser.add_argument('--auto-label', action='store_true', help='Run auto-labeling')
+    parser.add_argument('--num-auto', type=int, help='Number to auto-label')
+    parser.add_argument('--train', action='store_true', help='Train ML model')
+    parser.add_argument('--full', action='store_true', help='Full pipeline')
+    parser.add_argument('--status', action='store_true', help='Show status')
     
-    # Initialize pipeline
-    pipeline = Pipeline(SAMPLE_DIR, OUTPUT_DIR)
+    args = parser.parse_args()
     
-    # Process all publications
-    pipeline.process_all_publications()
+    # Setup
+    base_dir = Path(__file__).parent.parent
+    pipeline = Pipeline(base_dir / 'sample', base_dir / 'output')
     
-    # TODO: Train ML model after manual labeling
-    # pipeline.train_and_evaluate_ml_model()
+    # Execute
+    if args.status:
+        pipeline.show_status()
+    elif args.process or args.pub_id:
+        pipeline.run(pub_id=args.pub_id)
+    elif args.auto_label:
+        pipeline.run_auto_labeling(args.num_auto)
+    elif args.train:
+        pipeline.run_ml_pipeline()
+    elif args.full:
+        pipeline.run_full_pipeline()
+    else:
+        pipeline.interactive_menu()
 
 
 if __name__ == '__main__':

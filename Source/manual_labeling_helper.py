@@ -141,7 +141,7 @@ class ManualLabelingHelper:
         for i, (bib_key, bib_entry) in enumerate(bib_entries.items(), 1):
             # Skip if already labeled
             if bib_key in self.labels[pub_id]:
-                print(f"[{i}/{len(bib_entries)}] {bib_key} - Already labeled ✓")
+                print(f"[{i}/{len(bib_entries)}] {bib_key} - Already labeled")
                 continue
             
             print(f"\n{'-'*70}")
@@ -179,13 +179,13 @@ class ManualLabelingHelper:
                 # Use suggestion
                 arxiv_id = suggestions[int(response) - 1][0]
                 self.labels[pub_id][bib_key] = arxiv_id
-                print(f"✓ Labeled: {bib_key} → {arxiv_id}")
+                print(f"[OK] Labeled: {bib_key} = {arxiv_id}")
             elif response in references:
                 # Direct arXiv ID input
                 self.labels[pub_id][bib_key] = response
-                print(f"✓ Labeled: {bib_key} → {response}")
+                print(f"[OK] Labeled: {bib_key} = {response}")
             else:
-                print("❌ Invalid input, skipping...")
+                print("[ERROR] Invalid input, skipping...")
         
         # Save after each publication
         self.save_labels()
@@ -223,21 +223,21 @@ class ManualLabelingHelper:
         
         req_met = True
         if total_pubs < 5:
-            print(f"❌ Need at least 5 publications (have {total_pubs})")
+            print(f"[ERROR] Need at least 5 publications (have {total_pubs})")
             req_met = False
         else:
-            print(f"✓ Publications requirement met ({total_pubs} ≥ 5)")
+            print(f"[OK] Publications requirement met ({total_pubs} >= 5)")
         
         if total_pairs < 20:
-            print(f"❌ Need at least 20 pairs (have {total_pairs})")
+            print(f"[ERROR] Need at least 20 pairs (have {total_pairs})")
             req_met = False
         else:
-            print(f"✓ Pairs requirement met ({total_pairs} ≥ 20)")
+            print(f"[OK] Pairs requirement met ({total_pairs} >= 20)")
         
         if req_met:
             print(f"\n🎉 All requirements met! Ready for ML training.")
         else:
-            print(f"\n⚠️  Continue labeling to meet requirements.")
+            print(f"\n[WARNING] Continue labeling to meet requirements.")
     
     def run(self):
         """Run interactive labeling session"""
@@ -254,7 +254,7 @@ class ManualLabelingHelper:
         print(f"\n{'='*70}")
         print("Available publications:")
         for i, pub_id in enumerate(pubs[:10], 1):  # Show first 10
-            status = "✓ Labeled" if pub_id in self.labels else "○ Not labeled"
+            status = "[Labeled]" if pub_id in self.labels else "[Not labeled]"
             pairs = len(self.labels.get(pub_id, {}))
             print(f"  {i}. {pub_id} - {status} ({pairs} pairs)")
         
@@ -282,9 +282,9 @@ class ManualLabelingHelper:
             elif choice in pubs:
                 self.interactive_label(choice)
             else:
-                print("❌ Invalid choice")
+                print("[ERROR] Invalid choice")
         
-        print("\n✅ Labeling session complete!")
+        print("\n[OK] Labeling session complete!")
         self.show_statistics()
 
 

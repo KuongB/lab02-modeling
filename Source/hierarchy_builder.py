@@ -102,22 +102,40 @@ class HierarchyBuilder:
             # Check if this section should be excluded
             title_lower = title.lower().strip()
             
-            # Skip references section
-            if any(excl in title_lower for excl in EXCLUDE_SECTIONS):
-                continue
+            # Check if this is References/Bibliography section
+            is_references = any(excl in title_lower for excl in EXCLUDE_SECTIONS)
             
             # Include acknowledgements and appendices even if unnumbered
             include_unnumbered = any(incl in title_lower for incl in INCLUDE_UNNUMBERED_SECTIONS)
             
-            sections.append({
-                'command': cmd,
-                'title': title,
-                'level': section_levels.get(cmd, 1),
-                'position': position,
-                'end': match.end(),
-                'is_unnumbered': is_unnumbered,
-                'include_unnumbered': include_unnumbered
-            })
+            # Skip numbered references section OR unnumbered sections that are not in include list
+            if is_references:
+                # Don't add to sections list, but we'll handle stopping at this point later
+                sections.append({
+                    'command': cmd,
+                    'title': title,
+                    'level': section_levels.get(cmd, 1),
+                    'position': position,
+                    'end': match.end(),
+                    'is_unnumbered': is_unnumbered,
+                    'include_unnumbered': include_unnumbered,
+                    'is_references': True
+                })
+            elif is_unnumbered and not include_unnumbered:
+                # Skip unnumbered sections that are not in include list
+                continue
+            else:
+                # Include this section
+                sections.append({
+                    'command': cmd,
+                    'title': title,
+                    'level': section_levels.get(cmd, 1),
+                    'position': position,
+                    'end': match.end(),
+                    'is_unnumbered': is_unnumbered,
+                    'include_unnumbered': include_unnumbered,
+                    'is_references': False
+                })
         
         return sections
     
@@ -237,9 +255,36 @@ class HierarchyBuilder:
         # Extract sections
         sections = self.extract_sections(body_content)
         
+        # Find where References section starts (to stop processing there)
+        # Check both section commands and bibliography commands
+        references_start_pos = None
+        filtered_sections = []
+        
+        for i, section in enumerate(sections):
+            if section.get('is_references', False):
+                references_start_pos = section['position']
+                # Don't include References and everything after
+                break
+            else:
+                filtered_sections.append(section)
+        
+        # Also check for \bibliography{} or \bibliographystyle{} commands
+        # which might appear without a References section heading
+        biblio_match = re.search(r'\\(bibliography|bibliographystyle|begin\{thebibliography\})', 
+                                body_content)
+        if biblio_match:
+            biblio_pos = biblio_match.start()
+            # Use the earlier position between section-based and command-based detection
+            if references_start_pos is None or biblio_pos < references_start_pos:
+                references_start_pos = biblio_pos
+        
+        sections = filtered_sections
+        
         if not sections:
             # No sections found - treat entire body as one section
-            self._process_content_block(body_content, root, 0, len(body_content))
+            # But stop at References if found
+            end_pos = references_start_pos if references_start_pos else len(body_content)
+            self._process_content_block(body_content[:end_pos], root, 0, end_pos)
             return root
         
         # Build section hierarchy
@@ -265,12 +310,13 @@ class HierarchyBuilder:
             parent.add_child(section_node)
             section_stack.append(section_node)
             
-            # Extract content for this section (from section end to next section start)
+            # Extract content for this section (from section end to next section start or References)
             start_pos = section['end']
             if i + 1 < len(sections):
                 end_pos = sections[i + 1]['position']
             else:
-                end_pos = len(body_content)
+                # Last section - stop at References or end of content
+                end_pos = references_start_pos if references_start_pos else len(body_content)
             
             section_content = body_content[start_pos:end_pos]
             
@@ -335,12 +381,12 @@ class HierarchyBuilder:
                 parent_node.add_child(fig_node)
                 
             elif env['env_type'] == 'list':
-                # Create list node
+                # Create list node with full list environment content
                 list_id = self._get_next_id('list', parent_node.id)
                 list_node = HierarchyNode(
                     node_id=list_id,
                     node_type='list',
-                    content='',
+                    content=env['full_content'],  # Store full list environment
                     title='',
                     level=parent_node.level + 1,
                     parent_id=parent_node.id
@@ -387,12 +433,12 @@ class HierarchyBuilder:
                 if not para_text:
                     continue
                 
-                # Create paragraph node
+                # Create paragraph node with full paragraph text as content
                 para_id = self._get_next_id('paragraph', parent_node.id)
                 para_node = HierarchyNode(
                     node_id=para_id,
                     node_type='paragraph',
-                    content='',
+                    content=para_text,  # Store full paragraph text
                     title='',
                     level=parent_node.level + 1,
                     parent_id=parent_node.id
@@ -426,11 +472,22 @@ def build_hierarchy_from_versions(pub_id: str, versions_data: Dict[str, Dict]) -
         versions_data: Dictionary mapping version -> parsed data
         
     Returns:
-        Combined hierarchy structure
+        Combined hierarchy structure following format:
+        {
+            "elements": {
+                "id": "content or title"
+            },
+            "hierarchy": {
+                "version": {
+                    "child_id": "parent_id"
+                }
+            }
+        }
     """
     all_elements = {}
     all_hierarchies = {}
-    content_hash_to_id = {}  # For deduplication
+    content_hash_to_id = {}  # For deduplication: hash -> canonical_id
+    id_mapping = {}  # For mapping: original_id -> canonical_id (after dedup)
     
     for version, data in versions_data.items():
         builder = HierarchyBuilder(pub_id, version)
@@ -442,29 +499,49 @@ def build_hierarchy_from_versions(pub_id: str, versions_data: Dict[str, Dict]) -
         # Build hierarchy for this version
         root = builder.build_hierarchy(body_content)
         
-        # Collect all nodes
+        # Collect all nodes and handle deduplication
         version_hierarchy = {}
+        id_mapping[version] = {}  # Track ID mappings for this version
         
         for node_id, node in builder.all_nodes.items():
-            # Check for duplicate content across versions
-            if node.content and node.content_hash:
+            canonical_id = node_id  # Default to original ID
+            
+            # Check for duplicate content across versions (only for leaf nodes with content)
+            if node.content and node.content_hash and node.type in ['sentence', 'equation', 'figure', 'item']:
                 if node.content_hash in content_hash_to_id:
-                    # Reuse existing ID
-                    deduplicated_id = content_hash_to_id[node.content_hash]
-                    # Update hierarchy mapping but use existing element
-                    if node.parent_id:
-                        version_hierarchy[node.id] = node.parent_id
+                    # Reuse existing ID for duplicate content
+                    canonical_id = content_hash_to_id[node.content_hash]
+                    id_mapping[version][node_id] = canonical_id
                 else:
-                    # New content
-                    content_hash_to_id[node.content_hash] = node.id
-                    all_elements[node.id] = node.content if node.type in ['sentence', 'equation', 'figure', 'item'] else node.title
-                    if node.parent_id:
-                        version_hierarchy[node.id] = node.parent_id
+                    # New content - register it
+                    content_hash_to_id[node.content_hash] = node_id
+                    all_elements[node_id] = node.content
+                    id_mapping[version][node_id] = node_id
             else:
-                # No content (structural node like section, paragraph)
-                all_elements[node.id] = node.title
-                if node.parent_id:
-                    version_hierarchy[node.id] = node.parent_id
+                # Structural node (section, paragraph, etc.) or node with title
+                # These are NOT deduplicated - each version has its own structure
+                if node.type in ['sentence', 'equation', 'figure', 'item']:
+                    # Leaf node with content
+                    all_elements[node_id] = node.content if node.content else node.title
+                elif node.type in ['paragraph', 'list']:
+                    # Paragraph/list nodes have content, not title
+                    all_elements[node_id] = node.content if node.content else ''
+                else:
+                    # Higher-level component (section, document) with title
+                    all_elements[node_id] = node.title if node.title else node.content
+                id_mapping[version][node_id] = node_id
+        
+        # Build hierarchy mapping: child_id -> parent_id
+        # Use canonical IDs after deduplication
+        for node_id, node in builder.all_nodes.items():
+            if node.parent_id:
+                # Map both child and parent to their canonical IDs
+                child_canonical = id_mapping[version].get(node_id, node_id)
+                parent_canonical = id_mapping[version].get(node.parent_id, node.parent_id)
+                version_hierarchy[child_canonical] = parent_canonical
+            else:
+                # This is root - no parent
+                pass
         
         all_hierarchies[version] = version_hierarchy
     

@@ -210,3 +210,7 @@ def load_json_safe(filepath: Path) -> Optional[Dict]:
     except Exception as e:
         print(f"Error loading {filepath}: {e}")
         return None
+
+
+# Alias for consistency
+save_json_safe = write_json_safe

@@ -1,270 +1,118 @@
-# Lab 02 - Modeling: Hierarchical Parsing & Reference Matching
+# Lab 02 - Data Modeling Pipeline
 
-## Mô tả dự án
+Pipeline xử lý và phân tích dữ liệu LaTeX, thực hiện reference matching với Machine Learning.
 
-Pipeline xử lý dữ liệu LaTeX và matching tài liệu tham khảo cho bài tập Lab 02 - Môn Nhập môn Khoa học Dữ liệu.
-
-### Chức năng chính:
-
-1. **Phần 1: Hierarchical Parsing & Standardization**
-   - Thu thập và hợp nhất các file LaTeX (multi-file gathering)
-   - Xây dựng cấu trúc phân cấp (hierarchy tree)
-   - Chuẩn hóa LaTeX content
-   - Trích xuất và khử trùng BibTeX references
-
-2. **Phần 2: Reference Matching Pipeline**
-   - Feature engineering cho matching
-   - Machine Learning model training
-   - Đánh giá bằng MRR (Mean Reciprocal Rank)
-
-## Cấu trúc thư mục
+## 📁 Cấu Trúc
 
 ```
 Source/
-├── config.py                 # Configuration settings
-├── utils.py                  # Utility functions
-├── latex_parser.py           # LaTeX file parsing
-├── latex_cleaner.py          # LaTeX content cleaning
-├── hierarchy_builder.py      # Hierarchy construction
-├── bibtex_processor.py       # BibTeX processing & deduplication
-├── reference_matching.py     # ML reference matching
-├── main.py                   # Main pipeline
-├── requirements.txt          # Python dependencies
-└── README.md                 # This file
-
-<MSSV>/                       # Output directory
-├── 2310-15395/
-│   ├── metadata.json
-│   ├── references.json
-│   ├── refs.bib
-│   ├── hierarchy.json
-│   └── pred.json (for train/valid/test pubs)
-├── 2310-15396/
-│   └── ...
+├── main.py                      # ⭐ Main pipeline (interactive)
+├── manual_labeling_helper.py   # 🏷️  Manual labeling tool
+│
+├── latex_parser.py              # Parse LaTeX
+├── latex_cleaner.py             # Clean content
+├── hierarchy_builder.py         # Build hierarchy
+├── bibtex_processor.py          # Process BibTeX
+├── auto_labeling.py             # Auto-labeling
+├── reference_matching.py        # ML features
+├── ml_pipeline.py               # ML training
+│
+├── config.py                    # Configuration
+└── utils.py                     # Utilities
 ```
 
-## Cài đặt
+## 🚀 Cách Sử Dụng
 
-### 1. Cài đặt Python dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-### 2. Tải dữ liệu NLTK (cho text processing):
-
-```python
-import nltk
-nltk.download('punkt')
-nltk.download('stopwords')
-```
-
-## Sử dụng
-
-### Bước 1: Xử lý tất cả publications
+### Interactive Menu (Khuyến nghị)
 
 ```bash
 python main.py
 ```
 
-Script này sẽ:
-- Đọc tất cả publications từ thư mục `sample/`
-- Parse LaTeX files từ tất cả versions
-- Xây dựng hierarchy tree với deduplication
-- Trích xuất và merge BibTeX references
-- Tạo output files trong thư mục `<MSSV>/`
-
-### Bước 2: Gán nhãn thủ công (Manual Labeling)
-
-Tạo file `manual_labels.json` với format:
-
-```json
-{
-  "2310-15395": {
-    "Boddy:2022knd": "2207.12409",
-    "Krnjaic:2023odw": "2307.00041",
-    ...
-  },
-  "2310-15396": {
-    ...
-  }
-}
+Hiển thị menu:
+```
+1. Process publications
+2. Auto-labeling  
+3. Manual labeling
+4. Train ML model
+5. Run full pipeline
+6. Show status
+0. Exit
 ```
 
-**Yêu cầu:**
-- Ít nhất 5 publications
-- Tổng cộng ít nhất 20 cặp (bib_key, arxiv_id)
+### Command Line
 
-### Bước 3: Train ML Model
-
-```python
-from main import Pipeline
-
-pipeline = Pipeline(SAMPLE_DIR, OUTPUT_DIR)
-pipeline.train_and_evaluate_ml_model()
+```bash
+python main.py --process        # Xử lý publications
+python main.py --auto-label     # Auto-labeling
+python main.py --train          # Train model
+python main.py --full           # Full pipeline
+python main.py --status         # Show status
 ```
 
-### Bước 4: Generate predictions
+## 📋 Workflow
 
-Sau khi train model, predictions sẽ được lưu vào `pred.json` cho mỗi publication.
+### 1. Process Publications
+```bash
+python main.py --process
+```
+→ Parse LaTeX → Build hierarchy → Extract BibTeX
 
-## Format Output Files
+### 2. Manual Labeling
+```bash
+python manual_labeling_helper.py
+```
+→ Label BibTeX → arXiv ID (≥5 pubs, ≥20 pairs)
 
-### 1. `hierarchy.json`
+### 3. Auto-Labeling
+```bash
+python main.py --auto-label
+```
+→ Tự động label ~10% data
 
-```json
-{
-  "elements": {
-    "element-id": "content or title",
-    ...
-  },
-  "hierarchy": {
-    "1": {
-      "child-id": "parent-id",
-      ...
-    },
-    "2": {
-      ...
-    }
-  }
-}
+### 4. Train Model
+```bash
+python main.py --train
+```
+→ Train Random Forest → Generate predictions → Compute MRR
+
+## 📊 Output Files
+
+**hierarchy.json** - Cấu trúc phân cấp
+**refs.bib** - BibTeX entries
+**pred.json** - ML predictions (top-5)
+
+## ✅ Quick Check
+
+```bash
+python main.py --status
 ```
 
-### 2. `refs.bib`
+Hiển thị:
+- Số publications đã xử lý
+- Số labels (manual + auto)
+- MRR scores (train/valid/test)
+- Next steps
 
-Standard BibTeX format với entries đã deduplicated.
+## 🔧 Commands
 
-### 3. `pred.json`
+```bash
+# Process specific publication
+python main.py --pub-id 2310-15395
 
-```json
-{
-  "partition": "train|valid|test",
-  "groundtruth": {
-    "bib_key": "arxiv_id",
-    ...
-  },
-  "prediction": {
-    "bib_key": ["cand1", "cand2", "cand3", "cand4", "cand5"],
-    ...
-  }
-}
+# Auto-label 5 publications
+python main.py --auto-label --num-auto 5
+
+# Full pipeline
+python main.py --full
 ```
 
-## Các quyết định thiết kế
+## 📝 Requirements
 
-### 1. Multi-file Gathering
-
-- Tìm file chứa `\begin{document}` làm main file
-- Nếu có nhiều files, ưu tiên `main.tex` hoặc file lớn nhất
-- Recursively parse tất cả `\input{}` và `\include{}`
-
-### 2. Hierarchy Construction
-
-- **Document** là root node
-- **Sections** (chapter, section, subsection, ...) tạo hierarchy levels
-- **Smallest elements**: Sentences, Equations, Figures/Tables, List Items
-- **Lists**: `\begin{itemize}` là higher component, mỗi `\item` là next level
-- **Exclusions**: References section
-- **Inclusions**: Acknowledgements, Appendices (kể cả unnumbered)
-
-### 3. Content Deduplication
-
-- Sử dụng SHA256 hash của normalized content
-- Nếu content match giữa versions → reuse same element ID
-- Structural nodes (sections, paragraphs) giữ riêng nếu titles khác
-
-### 4. BibTeX Processing
-
-- Ưu tiên `.bib` files, fallback sang `.bbl` files
-- Deduplicate based on content similarity (title, author, year)
-- Merge fields từ duplicate entries (union)
-
-### 5. ML Feature Engineering
-
-Features sử dụng:
-1. Title token overlap (Jaccard similarity)
-2. Title Levenshtein distance  
-3. Title length ratio
-4. Author similarity (exact + partial matching)
-5. Author count difference
-6. Year similarity
-7. arXiv ID presence in BibTeX
-
-Model: Random Forest Classifier
-
-## Xử lý các trường hợp đặc biệt
-
-### Case 1: Nhiều files có `\begin{document}`
-
-**Giải pháp**: Chọn `main.tex` nếu có, nếu không chọn file lớn nhất.
-**Log**: Ghi lại trong report file nào được chọn.
-
-### Case 2: Không có file `.bib`
-
-**Giải pháp**: Parse `.bbl` file và convert về BibTeX format.
-**Hạn chế**: Một số metadata có thể bị mất trong `.bbl`.
-
-### Case 3: Duplicate references với keys khác nhau
-
-**Giải pháp**: Deduplicate dựa trên content matching, giữ một key canonical, map các keys khác về key canonical.
-
-### Case 4: Sections có cùng children nhưng titles khác
-
-**Giải pháp**: Giữ riêng biệt (không merge) theo instructor guidance.
-
-## Evaluation Metrics
-
-### Mean Reciprocal Rank (MRR)
-
-$$MRR = \frac{1}{|Q|} \sum_{i=1}^{|Q|} \frac{1}{rank_i}$$
-
-Trong đó:
-- $rank_i$ là vị trí của kết quả đúng trong top-5 predictions
-- Nếu không nằm trong top-5, score = 0
-
-## Testing
-
-Chạy test trên một publication:
-
-```python
-from main import Pipeline
-
-pipeline = Pipeline(SAMPLE_DIR, OUTPUT_DIR)
-success = pipeline.process_publication('2310-15395')
-print(f"Success: {success}")
+```bash
+pip install -r requirements.txt
 ```
 
-## Troubleshooting
+---
 
-### Lỗi Unicode Decode
-
-File LaTeX có encoding khác nhau. Pipeline tự động thử nhiều encodings:
-- UTF-8
-- Latin-1
-- ISO-8859-1
-- CP1252
-
-### Lỗi Parse LaTeX
-
-Một số constructs LaTeX phức tạp có thể không được parse đúng. Kiểm tra:
-- Nested environments
-- Unclosed braces
-- Custom commands
-
-## TODO
-
-- [ ] Implement auto-labeling với regex và string matching
-- [ ] Implement data splitting (train/valid/test)
-- [ ] Train và evaluate ML model
-- [ ] Generate `pred.json` files
-- [ ] Compute final MRR scores
-- [ ] Write detailed report
-
-## Tác giả
-
-- MSSV: 23127332
-- Lớp: Nhập môn Khoa học Dữ liệu
-
-## License
-
-Academic use only - Lab 02 Assignment
+**Lab 02 - NM-KHDL**

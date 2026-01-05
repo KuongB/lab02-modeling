@@ -169,8 +169,11 @@ class ReferenceFeatureExtractor:
         """
         features = []
         
+        # Handle BibEntry object or dict
+        bib_data = bib_entry.fields if hasattr(bib_entry, 'fields') else bib_entry
+        
         # Title similarity features
-        bib_title = bib_entry.get('title', '')
+        bib_title = bib_data.get('title', '')
         ref_title = ref_entry.get('title', '')
         
         if bib_title and ref_title:
@@ -193,7 +196,7 @@ class ReferenceFeatureExtractor:
             features.extend([0.0, 0.0, 0.0])
         
         # Author similarity
-        bib_authors = bib_entry.get('authors', [])
+        bib_authors = bib_data.get('author', '')
         ref_authors = ref_entry.get('authors', [])
         
         if isinstance(bib_authors, str):
@@ -209,13 +212,13 @@ class ReferenceFeatureExtractor:
         features.append(min(author_count_diff, 10) / 10.0)  # Normalize to 0-1
         
         # Year similarity
-        bib_year = bib_entry.get('year', '') or bib_entry.get('submitted_date', '')
+        bib_year = bib_data.get('year', '') or bib_data.get('submitted_date', '')
         ref_year = ref_entry.get('submitted_date', '')
         year_sim = self.year_similarity(bib_year, ref_year)
         features.append(year_sim)
         
         # arXiv ID in BibTeX (strong indicator)
-        bib_text = str(bib_entry)
+        bib_text = str(bib_data)
         ref_arxiv_id = ref_entry.get('arxiv_id', '')
         has_arxiv_id = 1.0 if ref_arxiv_id and ref_arxiv_id in bib_text else 0.0
         features.append(has_arxiv_id)
